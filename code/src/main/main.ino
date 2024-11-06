@@ -82,13 +82,13 @@ void loop() {
   lcd.print("Welcome, Group 2");
   delay(1000);
   lcd.clear();
-  standbyMode(); 
+  standbyMode();
 }
 
 void standbyMode() {
   lcd.setCursor(0, 0);
   lcd.print("Scan/Enter/Phone");
-  
+
   while (true) {
     if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
       processRFID();
@@ -114,7 +114,7 @@ void processRFID() {
   lcd.clear();
   lcd.print("Scanning RFID...");
   String ID = readRFID();
-  
+
   Serial.print("Read RFID ID: ");
   Serial.println(ID);
   Serial.print("Expected UID: ");
@@ -137,9 +137,9 @@ String readRFID() {
     }
     ID += String(rfid.uid.uidByte[i], HEX);
   }
-  ID.toUpperCase();  // Ensure all characters are uppercase
+  ID.toUpperCase();   // Ensure all characters are uppercase
   rfid.PICC_HaltA();  // Stop RFID reading
-  
+
   Serial.print("Formatted RFID ID: ");
   Serial.println(ID);  // For debugging
   return ID;
@@ -203,9 +203,19 @@ void processBluetoothCommand(String command) {
   if (firstSeparatorIndex != -1 && secondSeparatorIndex == -1) {
     String receivedPassword = command.substring(0, firstSeparatorIndex);
     String action = command.substring(firstSeparatorIndex + 1);
-    
+
     if (action == "OPEN" && receivedPassword == defaultPassword) {
       openDoor();
+    } else if (action == "ADDFINGER" && receivedPassword == defaultPassword) {
+      delay(1000);
+      if(getDistance() < MAX_DISTANCE) {
+        addNewFingerprint();
+      }else{
+        lcd.clear();
+        lcd.print("Cannot detect finger...");
+        delay(1500);
+      }
+      
     } else {
       lcd.clear();
       lcd.print("Wrong Password");
@@ -253,16 +263,16 @@ float getDistance() {
 }
 
 void openDoor() {
-  if (!doorOpen) {        
-    servoPosition = 160;  
+  if (!doorOpen) {
+    servoPosition = 160;
     servo.write(servoPosition);
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Door is open");
     Serial.println("Door is open");
-    doorOpen = true;  
+    doorOpen = true;
 
-    tone(BUZZER_PIN, 1000, 500);  
+    tone(BUZZER_PIN, 1000, 500);
 
     for (int countdown = 5; countdown > 0; countdown--) {
       lcd.setCursor(0, 1);
@@ -272,49 +282,49 @@ void openDoor() {
       delay(1000);
     }
 
-    closeDoor();  
+    closeDoor();
   }
 }
 
 void closeDoor() {
-  if (doorOpen) {        
-    servoPosition = 70;  
+  if (doorOpen) {
+    servoPosition = 70;
     servo.write(servoPosition);
     lcd.clear();
     lcd.setCursor(0, 0);
-    tone(BUZZER_PIN, 600, 700);  
+    tone(BUZZER_PIN, 600, 700);
     lcd.print("Door is locked");
     Serial.println("Door is locked");
     delay(1500);
     lcd.clear();
-    doorOpen = false;  
+    doorOpen = false;
   }
 }
 
 String getInputFromUser(String message, unsigned long timeout, int maxKey) {
-  String enteredInput = "";  
+  String enteredInput = "";
   char key;
-  unsigned long lastKeyPressTime = millis();  
+  unsigned long lastKeyPressTime = millis();
 
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(message);  
+  lcd.print(message);
 
   while (true) {
-    key = keypad.getKey();  
+    key = keypad.getKey();
     if (key) {
-      lastKeyPressTime = millis();  
+      lastKeyPressTime = millis();
 
-      if (key == '#') {  
+      if (key == '#') {
         break;
-      } else if (key == '*') {  
+      } else if (key == '*') {
         enteredInput = "";
         lcd.setCursor(0, 1);
-        lcd.print("                ");              
-      } else if (enteredInput.length() < maxKey) {  
+        lcd.print("                ");
+      } else if (enteredInput.length() < maxKey) {
         enteredInput += key;
-        lcd.setCursor(enteredInput.length() - 1, 1);  
-        lcd.print('*');                               
+        lcd.setCursor(enteredInput.length() - 1, 1);
+        lcd.print('*');
       }
     }
 
@@ -324,15 +334,15 @@ String getInputFromUser(String message, unsigned long timeout, int maxKey) {
 
     if (millis() - lastKeyPressTime > timeout) {
       Serial.println("Input timed out.");
-      break;  
+      break;
     }
   }
 
-  return enteredInput;  
+  return enteredInput;
 }
 
 bool checkPassword() {
-  String enteredPassword = getInputFromUser("Enter Password:", 5000, 4);  
+  String enteredPassword = getInputFromUser("Enter Password:", 5000, 4);
   defaultPassword = loadPasswordFromEEPROM();
   if (enteredPassword == defaultPassword) {
     Serial.println("Password correct");
@@ -342,7 +352,7 @@ bool checkPassword() {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Incorrect Password");
-    delay(1500);  
+    delay(1500);
     return false;
   }
 }
@@ -351,7 +361,7 @@ void savePasswordToEEPROM(String password) {
   for (int i = 0; i < 4; i++) {
     EEPROM.write(PASSWORD_ADDRESS + i, password[i]);
   }
-  EEPROM.write(PASSWORD_ADDRESS + 4, '\0');  
+  EEPROM.write(PASSWORD_ADDRESS + 4, '\0');
 }
 
 void changePasswordByKeypad() {
@@ -364,14 +374,14 @@ void changePasswordByKeypad() {
   while (newPassword.length() < 4) {
     key = keypad.getKey();
     if (key) {
-      if (key == '*') {  
+      if (key == '*') {
         newPassword = "";
         lcd.setCursor(0, 1);
-        lcd.print("                ");        
-      } else if (key >= '0' && key <= '9') {  
+        lcd.print("                ");
+      } else if (key >= '0' && key <= '9') {
         newPassword += key;
         lcd.setCursor(newPassword.length() - 1, 1);
-        lcd.print('*');  
+        lcd.print('*');
       }
     }
   }
@@ -382,7 +392,7 @@ void changePasswordByKeypad() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Password Changed!");
-  delay(1500);  
+  delay(1500);
 }
 
 String loadPasswordFromEEPROM() {
@@ -405,8 +415,115 @@ String getCommandFromBluetooth() {
     } else {
       command += receivedChar;
     }
-    delay(5);  
+    delay(5);
   }
 
   return command;
 }
+void addNewFingerprint() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Ready Add New");
+    lcd.setCursor(1, 0);
+    lcd.print("Finger");
+    delay(1500);
+
+    int id = finger.getTemplateCount() + 1;  // New fingerprint ID based on count
+    int p = -1;
+
+    // Step 1: Capture first image
+    while (p != FINGERPRINT_OK) {
+        p = finger.getImage();
+        if (p == FINGERPRINT_NOFINGER) {
+            lcd.clear();
+            lcd.print("Place Finger...");
+            delay(500);
+        } else if (p == FINGERPRINT_OK) {
+            lcd.clear();
+            lcd.print("Image taken");
+            delay(1000);
+        } else {
+            lcd.clear();
+            lcd.print("Error: ");
+            lcd.print(p);
+            delay(1000);
+            return;
+        }
+    }
+
+    // Convert image to template
+    p = finger.image2Tz(1);
+    if (p != FINGERPRINT_OK) {
+        lcd.clear();
+        lcd.print("Image conversion");
+        lcd.setCursor(0, 1);
+        lcd.print("failed");
+        delay(1500);
+        return;
+    }
+
+    lcd.clear();
+    lcd.print("Remove Finger");
+    delay(2000);
+
+    // Step 2: Capture second image
+    p = -1;
+    while (p != FINGERPRINT_OK) {
+        p = finger.getImage();
+        if (p == FINGERPRINT_NOFINGER) {
+            lcd.clear();
+            lcd.print("Place Finger...");
+            delay(500);
+        } else if (p == FINGERPRINT_OK) {
+            lcd.clear();
+            lcd.print("Second Image");
+            lcd.setCursor(0, 1);
+            lcd.print("Taken");
+            delay(1000);
+        } else {
+            lcd.clear();
+            lcd.print("Error: ");
+            lcd.print(p);
+            delay(1000);
+            return;
+        }
+    }
+
+    // Convert second image to template
+    p = finger.image2Tz(2);
+    if (p != FINGERPRINT_OK) {
+        lcd.clear();
+        lcd.print("2nd Image Conv.");
+        lcd.setCursor(0, 1);
+        lcd.print("Failed");
+        delay(1500);
+        return;
+    }
+
+    // Create model from both images
+    p = finger.createModel();
+    if (p != FINGERPRINT_OK) {
+        lcd.clear();
+        lcd.print("Fingerprint Match");
+        lcd.setCursor(0, 1);
+        lcd.print("Failed");
+        delay(1500);
+        return;
+    }
+
+    // Store model in specified ID location
+    p = finger.storeModel(id);
+    if (p == FINGERPRINT_OK) {
+        lcd.clear();
+        lcd.print("Fingerprint Added");
+        lcd.setCursor(0, 1);
+        lcd.print("ID: ");
+        lcd.print(id);
+        delay(1500);
+    } else {
+        lcd.clear();
+        lcd.print("Failed to Add");
+        delay(1500);
+    }
+}
+
