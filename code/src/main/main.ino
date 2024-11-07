@@ -16,7 +16,7 @@
 #define MAX_DISTANCE 10  // Maximum distance in cm to trigger fingerprint sensor
 #define BLUETOOTH_RX 15  // Bluetooth RX pin on Arduino Mega (RX3)
 #define BLUETOOTH_TX 14  // Bluetooth TX pin on Arduino Mega (TX3)
-
+#define EMERGENCY_BUTTON_PIN 10  // Define the emergency button pin
 #if (defined(__AVR__) || defined(ESP8266)) && !defined(__AVR_ATmega2560__)
 #include <SoftwareSerial.h>
 SoftwareSerial mySerial(18, 19);  // RX, TX pins for fingerprint sensor on Mega 2560 (18,19)
@@ -28,6 +28,8 @@ SoftwareSerial mySerial(18, 19);  // RX, TX pins for fingerprint sensor on Mega 
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
 String UID = "D9F5F15A";  // Expected RFID UID
 
+int emergencyPressCount = 0;     // Counter for tracking button presses in emergency mode
+bool emergencyOpen = false;      // Flag for emergency mode status
 Servo servo;
 LiquidCrystal_I2C lcd(0x27, 16, 2);       // Initialize LCD
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);  // Initialize RFID reader
@@ -55,6 +57,7 @@ byte rowPins[ROWS] = { 30, 31, 32, 33 };
 byte colPins[COLS] = { 34, 35, 36, 37 };
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
+
 void setup() {
   Serial.begin(9600);
   lcd.init();
@@ -69,6 +72,7 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   setupBluetooth();
+   pinMode(EMERGENCY_BUTTON_PIN, INPUT_PULLUP);
 
   defaultPassword = loadPasswordFromEEPROM();
   if (defaultPassword == "") {
@@ -85,29 +89,47 @@ void loop() {
   standbyMode();
 }
 
-void standbyMode() {
-  lcd.setCursor(0, 0);
-  lcd.print("Scan/Enter/Phone");
 
-  while (true) {
-    if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
-      processRFID();
-      break;
+void standbyMode() {
+    lcd.setCursor(0, 0);
+    lcd.print("Scan/Enter/Phone");
+
+    while (true) {
+        // Check emergency button state
+        if (digitalRead(EMERGENCY_BUTTON_PIN) == LOW) {  // Button is pressed
+            handleEmergencyButton();
+            delay(300);  // Debounce delay for button press
+        }
+
+        if (emergencyOpen) {
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Emergency Mode");
+            lcd.setCursor(0, 1);
+            lcd.print("Door is Opened");
+            delay(500);  // Refresh delay to avoid rapid LCD updates
+            continue;    // Skip other checks when in emergency mode
+        }
+
+        // Check other authentication methods
+        if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+            processRFID();
+            break;
+        }
+        if (getDistance() < MAX_DISTANCE) {
+            processFingerprint();
+            break;
+        }
+        if (keypad.getKey()) {
+            processKeypad();
+            break;
+        }
+        String command = getCommandFromBluetooth();
+        if (command != "") {
+            processBluetoothCommand(command);
+            break;
+        }
     }
-    if (getDistance() < MAX_DISTANCE) {
-      processFingerprint();
-      break;
-    }
-    if (keypad.getKey()) {
-      processKeypad();
-      break;
-    }
-    String command = getCommandFromBluetooth();
-    if (command != "") {
-      processBluetoothCommand(command);
-      break;
-    }
-  }
 }
 
 void processRFID() {
@@ -207,15 +229,17 @@ void processBluetoothCommand(String command) {
     if (action == "OPEN" && receivedPassword == defaultPassword) {
       openDoor();
     } else if (action == "ADDFINGER" && receivedPassword == defaultPassword) {
-      delay(1000);
-      if(getDistance() < MAX_DISTANCE) {
+      lcd.clear();
+      lcd.print("Add New finger...");
+      delay(2000);
+      if (getDistance() < MAX_DISTANCE) {
         addNewFingerprint();
-      }else{
+      } else {
         lcd.clear();
         lcd.print("Cannot detect finger...");
         delay(1500);
       }
-      
+
     } else {
       lcd.clear();
       lcd.print("Wrong Password");
@@ -420,110 +444,170 @@ String getCommandFromBluetooth() {
 
   return command;
 }
+
 void addNewFingerprint() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Add New Fingerprint");
+  delay(1500);
+
+  // Find the next available ID slot by testing each ID
+  int id = 1;  // Starting from ID 1
+  while (finger.loadModel(id) == FINGERPRINT_OK) {
+    id++;  // Increment ID if this slot is already taken
+  }
+
+  int p = -1;
+
+  // Step 1: Capture the first image
+  while (p != FINGERPRINT_OK) {
+    p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Place Finger");
+      delay(500);
+    } else if (p == FINGERPRINT_OK) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Image Captured");
+      delay(1000);
+    } else {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Error:");
+      lcd.setCursor(0, 1);
+      lcd.print("Code ");
+      lcd.print(p);
+      delay(1500);
+      return;
+    }
+  }
+
+  // Convert image to template
+  p = finger.image2Tz(1);
+  if (p != FINGERPRINT_OK) {
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Ready Add New");
-    lcd.setCursor(1, 0);
-    lcd.print("Finger");
+    lcd.print("Conversion");
+    lcd.setCursor(0, 1);
+    lcd.print("Failed");
     delay(1500);
+    return;
+  }
 
-    int id = finger.getTemplateCount() + 1;  // New fingerprint ID based on count
-    int p = -1;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Remove Finger");
+  delay(2000);
 
-    // Step 1: Capture first image
-    while (p != FINGERPRINT_OK) {
-        p = finger.getImage();
-        if (p == FINGERPRINT_NOFINGER) {
-            lcd.clear();
-            lcd.print("Place Finger...");
-            delay(500);
-        } else if (p == FINGERPRINT_OK) {
-            lcd.clear();
-            lcd.print("Image taken");
-            delay(1000);
-        } else {
-            lcd.clear();
-            lcd.print("Error: ");
-            lcd.print(p);
-            delay(1000);
-            return;
-        }
-    }
-
-    // Convert image to template
-    p = finger.image2Tz(1);
-    if (p != FINGERPRINT_OK) {
-        lcd.clear();
-        lcd.print("Image conversion");
-        lcd.setCursor(0, 1);
-        lcd.print("failed");
-        delay(1500);
-        return;
-    }
-
-    lcd.clear();
-    lcd.print("Remove Finger");
-    delay(2000);
-
-    // Step 2: Capture second image
-    p = -1;
-    while (p != FINGERPRINT_OK) {
-        p = finger.getImage();
-        if (p == FINGERPRINT_NOFINGER) {
-            lcd.clear();
-            lcd.print("Place Finger...");
-            delay(500);
-        } else if (p == FINGERPRINT_OK) {
-            lcd.clear();
-            lcd.print("Second Image");
-            lcd.setCursor(0, 1);
-            lcd.print("Taken");
-            delay(1000);
-        } else {
-            lcd.clear();
-            lcd.print("Error: ");
-            lcd.print(p);
-            delay(1000);
-            return;
-        }
-    }
-
-    // Convert second image to template
-    p = finger.image2Tz(2);
-    if (p != FINGERPRINT_OK) {
-        lcd.clear();
-        lcd.print("2nd Image Conv.");
-        lcd.setCursor(0, 1);
-        lcd.print("Failed");
-        delay(1500);
-        return;
-    }
-
-    // Create model from both images
-    p = finger.createModel();
-    if (p != FINGERPRINT_OK) {
-        lcd.clear();
-        lcd.print("Fingerprint Match");
-        lcd.setCursor(0, 1);
-        lcd.print("Failed");
-        delay(1500);
-        return;
-    }
-
-    // Store model in specified ID location
-    p = finger.storeModel(id);
-    if (p == FINGERPRINT_OK) {
-        lcd.clear();
-        lcd.print("Fingerprint Added");
-        lcd.setCursor(0, 1);
-        lcd.print("ID: ");
-        lcd.print(id);
-        delay(1500);
+  // Step 2: Capture the second image
+  p = -1;
+  while (p != FINGERPRINT_OK) {
+    p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Place Finger");
+      delay(500);
+    } else if (p == FINGERPRINT_OK) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Second Image");
+      lcd.setCursor(0, 1);
+      lcd.print("Captured");
+      delay(1000);
     } else {
-        lcd.clear();
-        lcd.print("Failed to Add");
-        delay(1500);
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Error:");
+      lcd.setCursor(0, 1);
+      lcd.print("Code ");
+      lcd.print(p);
+      delay(1500);
+      return;
     }
-}
+  }
 
+  // Convert second image to template
+  p = finger.image2Tz(2);
+  if (p != FINGERPRINT_OK) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("2nd Conversion");
+    lcd.setCursor(0, 1);
+    lcd.print("Failed");
+    delay(1500);
+    return;
+  }
+
+  // Create model from both images
+  p = finger.createModel();
+  if (p != FINGERPRINT_OK) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Model Creation");
+    lcd.setCursor(0, 1);
+    lcd.print("Failed");
+    delay(1500);
+    return;
+  }
+
+  // Store the model in the next available ID slot
+  p = finger.storeModel(id);
+  if (p == FINGERPRINT_OK) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Fingerprint Added");
+    lcd.setCursor(0, 1);
+    lcd.print("ID: ");
+    lcd.print(id);
+    delay(1500);
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Storage Failed");
+    delay(1500);
+  }
+}
+void handleEmergencyButton() {
+  if (!emergencyOpen) {
+    // First press - activate emergency open
+    openDoorEmergency();
+    emergencyOpen = true;
+    emergencyPressCount = 0;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Emergency Mode:");
+    lcd.setCursor(0, 1);
+    lcd.print("Door is Opened");
+    Serial.println("Emergency Mode Activated");
+  } else {
+    // Increment press count for reset attempt
+    emergencyPressCount++;
+    Serial.print("Emergency Press Count: ");
+    Serial.println(emergencyPressCount);
+
+    // Check if reset is triggered
+    if (emergencyPressCount >= 3) {
+      closeDoor();            // Close the door
+      emergencyOpen = false;  // Exit emergency mode
+      emergencyPressCount = 0;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Emergency Mode");
+      lcd.setCursor(0, 1);
+      lcd.print("Deactivated");
+      Serial.println("Emergency Mode Deactivated");
+      delay(1500);  // Display message
+    }
+  }
+}
+void openDoorEmergency() {
+    servo.write(160);  // Open door position
+    doorOpen = true;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Door is Open");
+    tone(BUZZER_PIN, 1000, 500);  // Buzzer for feedback
+}
