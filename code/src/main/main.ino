@@ -8,14 +8,14 @@
 #include <SoftwareSerial.h>
 
 // Pin Configuration (Based on your mapping)
-#define RFID_SS_PIN 53   // RFID SS pin
-#define RFID_RST_PIN 5   // RFID reset pin
-#define BUZZER_PIN 8     // Buzzer pin
-#define TRIG_PIN 7       // Ultrasonic sensor Trig pin
-#define ECHO_PIN 6       // Ultrasonic sensor Echo pin
-#define MAX_DISTANCE 10  // Maximum distance in cm to trigger fingerprint sensor
-#define BLUETOOTH_RX 15  // Bluetooth RX pin on Arduino Mega (RX3)
-#define BLUETOOTH_TX 14  // Bluetooth TX pin on Arduino Mega (TX3)
+#define RFID_SS_PIN 53           // RFID SS pin
+#define RFID_RST_PIN 5           // RFID reset pin
+#define BUZZER_PIN 8             // Buzzer pin
+#define TRIG_PIN 7               // Ultrasonic sensor Trig pin
+#define ECHO_PIN 6               // Ultrasonic sensor Echo pin
+#define MAX_DISTANCE 10          // Maximum distance in cm to trigger fingerprint sensor
+#define BLUETOOTH_RX 15          // Bluetooth RX pin on Arduino Mega (RX3)
+#define BLUETOOTH_TX 14          // Bluetooth TX pin on Arduino Mega (TX3)
 #define EMERGENCY_BUTTON_PIN 10  // Define the emergency button pin
 #if (defined(__AVR__) || defined(ESP8266)) && !defined(__AVR_ATmega2560__)
 #include <SoftwareSerial.h>
@@ -26,10 +26,10 @@ SoftwareSerial mySerial(18, 19);  // RX, TX pins for fingerprint sensor on Mega 
 
 // Initialize components
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
-String UID = "D9F5F15A";  // Expected RFID UID
-
-int emergencyPressCount = 0;     // Counter for tracking button presses in emergency mode
-bool emergencyOpen = false;      // Flag for emergency mode status
+String UID = "D9F5F15A";      // Expected RFID UID
+int counterWrongPass = 0;     // counterWrongPass = 3, turn on safe mode
+int emergencyPressCount = 0;  // Counter for tracking button presses in emergency mode
+bool emergencyOpen = false;   // Flag for emergency mode status
 Servo servo;
 LiquidCrystal_I2C lcd(0x27, 16, 2);       // Initialize LCD
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);  // Initialize RFID reader
@@ -72,7 +72,7 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   setupBluetooth();
-   pinMode(EMERGENCY_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(EMERGENCY_BUTTON_PIN, INPUT_PULLUP);
 
   defaultPassword = loadPasswordFromEEPROM();
   if (defaultPassword == "") {
@@ -91,45 +91,45 @@ void loop() {
 
 
 void standbyMode() {
-    lcd.setCursor(0, 0);
-    lcd.print("Scan/Enter/Phone");
+  lcd.setCursor(0, 0);
+  lcd.print("Scan/Enter/Phone");
 
-    while (true) {
-        // Check emergency button state
-        if (digitalRead(EMERGENCY_BUTTON_PIN) == LOW) {  // Button is pressed
-            handleEmergencyButton();
-            delay(300);  // Debounce delay for button press
-        }
-
-        if (emergencyOpen) {
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            lcd.print("Emergency Mode");
-            lcd.setCursor(0, 1);
-            lcd.print("Door is Opened");
-            delay(500);  // Refresh delay to avoid rapid LCD updates
-            continue;    // Skip other checks when in emergency mode
-        }
-
-        // Check other authentication methods
-        if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
-            processRFID();
-            break;
-        }
-        if (getDistance() < MAX_DISTANCE) {
-            processFingerprint();
-            break;
-        }
-        if (keypad.getKey()) {
-            processKeypad();
-            break;
-        }
-        String command = getCommandFromBluetooth();
-        if (command != "") {
-            processBluetoothCommand(command);
-            break;
-        }
+  while (true) {
+    // Check emergency button state
+    if (digitalRead(EMERGENCY_BUTTON_PIN) == LOW) {  // Button is pressed
+      handleEmergencyButton();
+      delay(300);  // Debounce delay for button press
     }
+
+    if (emergencyOpen) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Emergency Mode");
+      lcd.setCursor(0, 1);
+      lcd.print("Door is Opened");
+      delay(500);  // Refresh delay to avoid rapid LCD updates
+      continue;    // Skip other checks when in emergency mode
+    }
+
+    // Check other authentication methods
+    if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+      processRFID();
+      break;
+    }
+    if (getDistance() < MAX_DISTANCE) {
+      processFingerprint();
+      break;
+    }
+    if (keypad.getKey()) {
+      processKeypad();
+      break;
+    }
+    String command = getCommandFromBluetooth();
+    if (command != "") {
+      processBluetoothCommand(command);
+      break;
+    }
+  }
 }
 
 void processRFID() {
@@ -148,6 +148,17 @@ void processRFID() {
     lcd.clear();
     lcd.print("Wrong RFID");
     delay(1500);
+    counterWrongPass++;
+    if (counterWrongPass == 3) {
+      for (int countdown = 10; countdown > 0; countdown--) {
+        lcd.setCursor(0, 0);
+        lcd.print("Try again in: ");
+        lcd.print(countdown);
+        lcd.print(" s ");
+        delay(1000);
+      }
+      counterWrongPass = 0;
+    }
   }
 }
 
@@ -181,6 +192,17 @@ void processFingerprint() {
       lcd.clear();
       lcd.print("Finger Not Found");
       delay(1500);
+      counterWrongPass++;
+      if (counterWrongPass == 3) {
+        for (int countdown = 10; countdown > 0; countdown--) {
+          lcd.setCursor(0, 0);
+          lcd.print("Try again in: ");
+          lcd.print(countdown);
+          lcd.print(" s ");
+          delay(1000);
+        }
+        counterWrongPass = 0;
+      }
     }
   } else {
     lcd.clear();
@@ -213,6 +235,18 @@ void processKeypad() {
     lcd.clear();
     lcd.print("Incorrect Password");
     delay(1500);
+    lcd.clear();
+    counterWrongPass++;
+    if (counterWrongPass == 3) {
+      for (int countdown = 10; countdown > 0; countdown--) {
+        lcd.setCursor(0, 0);
+        lcd.print("Try again in: ");
+        lcd.print(countdown);
+        lcd.print(" s ");
+        delay(1000);
+      }
+      counterWrongPass = 0;
+    }
   }
 }
 
@@ -244,6 +278,17 @@ void processBluetoothCommand(String command) {
       lcd.clear();
       lcd.print("Wrong Password");
       delay(1500);
+      counterWrongPass++;
+      if (counterWrongPass == 3) {
+        for (int countdown = 10; countdown > 0; countdown--) {
+          lcd.setCursor(0, 0);
+          lcd.print("Try again in: ");
+          lcd.print(countdown);
+          lcd.print(" s ");
+          delay(1000);
+        }
+        counterWrongPass = 0;
+      }
     }
   } else if (firstSeparatorIndex != -1 && secondSeparatorIndex != -1) {
     String oldPassword = command.substring(0, firstSeparatorIndex);
@@ -266,6 +311,17 @@ void processBluetoothCommand(String command) {
       lcd.clear();
       lcd.print("Wrong Old Password");
       delay(1500);
+      counterWrongPass++;
+      if (counterWrongPass == 3) {
+        for (int countdown = 10; countdown > 0; countdown--) {
+          lcd.setCursor(0, 0);
+          lcd.print("Try again in: ");
+          lcd.print(countdown);
+          lcd.print(" s ");
+          delay(1000);
+        }
+        counterWrongPass = 0;
+      }
     }
   } else {
     lcd.clear();
@@ -375,7 +431,7 @@ bool checkPassword() {
     Serial.println("Password incorrect");
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Incorrect Password");
+    lcd.print("Wrong Password");
     delay(1500);
     return false;
   }
@@ -589,7 +645,7 @@ void handleEmergencyButton() {
     Serial.println(emergencyPressCount);
 
     // Check if reset is triggered
-    if (emergencyPressCount >= 3) {
+    if (emergencyPressCount >= 1) {
       closeDoor();            // Close the door
       emergencyOpen = false;  // Exit emergency mode
       emergencyPressCount = 0;
@@ -604,10 +660,10 @@ void handleEmergencyButton() {
   }
 }
 void openDoorEmergency() {
-    servo.write(160);  // Open door position
-    doorOpen = true;
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Door is Open");
-    tone(BUZZER_PIN, 1000, 500);  // Buzzer for feedback
+  servo.write(160);  // Open door position
+  doorOpen = true;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Door is Open");
+  tone(BUZZER_PIN, 1000, 500);  // Buzzer for feedback
 }
