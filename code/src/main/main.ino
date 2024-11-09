@@ -26,10 +26,11 @@ SoftwareSerial mySerial(18, 19);  // RX, TX pins for fingerprint sensor on Mega 
 
 // Initialize components
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
-String UID = "D9F5F15A";      // Expected RFID UID
-int counterWrongPass = 0;     // counterWrongPass = 3, turn on safe mode
-int emergencyPressCount = 0;  // Counter for tracking button presses in emergency mode
-bool emergencyOpen = false;   // Flag for emergency mode status
+String uids[4] = { "D9F5F15A", "", "", "" };  // Expected RFID UID
+int uidCount = 1;                             //Number of UID
+int counterWrongPass = 0;                     // counterWrongPass = 3, turn on safe mode
+int emergencyPressCount = 0;                  // Counter for tracking button presses in emergency mode
+bool emergencyOpen = false;                   // Flag for emergency mode status
 Servo servo;
 LiquidCrystal_I2C lcd(0x27, 16, 2);       // Initialize LCD
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);  // Initialize RFID reader
@@ -135,32 +136,88 @@ void standbyMode() {
 void processRFID() {
   lcd.clear();
   lcd.print("Scanning RFID...");
-  String ID = readRFID();
+  String ID = readRFID();  // Read the current RFID tag
 
   Serial.print("Read RFID ID: ");
   Serial.println(ID);
-  Serial.print("Expected UID: ");
-  Serial.println(UID);
-
-  if (ID == UID) {
-    openDoor();
-  } else {
+  
+  bool isFound = false;  // Flag to check if the RFID is valid
+  
+  // Check if the scanned RFID is in the stored list of UIDs
+  for (int i = 0; i < uidCount; i++) {
+    if (ID == uids[i]) {
+      openDoor();  // Open the door if the RFID matches
+      isFound = true;
+      delay(1000);  // Small delay to display "Door open" message briefly
+      break;
+    }
+  }
+  
+  // If RFID not found, handle as an incorrect attempt
+  if (!isFound) {
     lcd.clear();
     lcd.print("Wrong RFID");
     delay(1500);
-    counterWrongPass++;
-    if (counterWrongPass == 3) {
+    
+    counterWrongPass++;  // Increment counter for incorrect attempts
+    
+    // If the incorrect attempts reach 3, enforce a timeout
+    if (counterWrongPass >= 3) {
       for (int countdown = 10; countdown > 0; countdown--) {
         lcd.setCursor(0, 0);
         lcd.print("Try again in: ");
         lcd.print(countdown);
         lcd.print(" s ");
-        delay(1000);
+        delay(1000);  // Delay for 1 second each count
       }
-      counterWrongPass = 0;
+      counterWrongPass = 0;  // Reset the counter after the timeout
     }
   }
 }
+
+
+// Function to add a new RFID card to the list of UIDs
+void addNewRFIDCard() {
+  // Check if the maximum number of UIDs (4) has already been reached
+  if (uidCount >= 4) {  
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Maximum 4 UID");  // Display message if limit is reached
+    delay(1500);
+    return;
+  }
+  
+  // Prompt the user to enter a new card
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Enter new card");
+  delay(2000);
+
+  // Read the new UID from the RFID scanner
+  String newUID = readRFID();
+  
+  // Check if the new UID already exists in the array
+  for (int i = 0; i < uidCount; i++) {
+    if (newUID == uids[i]) {  // Compare with existing UIDs in the array
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Card Duplicated!");  // Display error if UID already exists
+      delay(1500);
+      return;
+    }
+  }
+
+  // Add the new UID to the array and increment the count
+  uids[uidCount] = newUID;
+  uidCount++;
+  
+  // Confirm successful addition and show the current UID count
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Added UID no." + String(uidCount));
+  delay(1500);
+}
+
 
 String readRFID() {
   String ID = "";
@@ -274,6 +331,11 @@ void processBluetoothCommand(String command) {
         delay(1500);
       }
 
+    } else if (action == "ADDRFID" && receivedPassword == defaultPassword) {
+      lcd.clear();
+      lcd.print("Ready to add");
+      delay(1500);
+      addNewRFIDCard();
     } else {
       lcd.clear();
       lcd.print("Wrong Password");
